@@ -26,6 +26,10 @@ const (
 // initialized by a call to Factorize that has returned true. Calls to methods
 // of an unsuccessful Cholesky factorization will panic.
 type Cholesky struct {
+	// The chol pointer must never be retained as a pointer outside the Cholesky
+	// struct, either by returning chol outside the struct or by setting it to
+	// a pointer coming from outside. The same prohibition applies to the data
+	// slice within chol.
 	chol *TriDense
 	cond float64
 }
@@ -103,6 +107,23 @@ func (c *Cholesky) SetFromU(t *TriDense) {
 	c.updateCond(-1)
 }
 
+// Clone makes a copy of the input Cholesky into the receiver, overwriting the
+// previous value of the receiver. Clone does not place any restrictions on receiver
+// shape. Clone panics if the input Cholesky is not the result of a valid decomposition.
+func (c *Cholesky) Clone(chol *Cholesky) {
+	if !chol.valid() {
+		panic(badCholesky)
+	}
+	n := chol.Size()
+	if c.isZero() {
+		c.chol = NewTriDense(n, matrix.Upper, nil)
+	} else {
+		c.chol = NewTriDense(n, matrix.Upper, use(c.chol.mat.Data, n*n))
+	}
+	c.chol.Copy(chol.chol)
+	c.cond = chol.cond
+}
+
 // Size returns the dimension of the factorized matrix.
 func (c *Cholesky) Size() int {
 	if !c.valid() {
@@ -151,6 +172,29 @@ func (m *Dense) SolveCholesky(chol *Cholesky, b Matrix) error {
 	blas64.Trsm(blas.Left, blas.NoTrans, 1, chol.chol.mat, m.mat)
 	if chol.cond > matrix.ConditionTolerance {
 		return matrix.Condition(chol.cond)
+	}
+	return nil
+}
+
+// TODO(kortschak): Export this as SolveTwoChol.
+// solveTwoChol finds the matrix m that solves A * m = B where A and B are represented
+// by their Cholesky decompositions a and b, placing the result in the receiver.
+func (m *Dense) solveTwoChol(a, b *Cholesky) error {
+	if !a.valid() || !b.valid() {
+		panic(badCholesky)
+	}
+	bn := b.chol.mat.N
+	if a.chol.mat.N != bn {
+		panic(matrix.ErrShape)
+	}
+
+	m.reuseAsZeroed(bn, bn)
+	m.Copy(b.chol.T())
+	blas64.Trsm(blas.Left, blas.Trans, 1, a.chol.mat, m.mat)
+	blas64.Trsm(blas.Left, blas.NoTrans, 1, a.chol.mat, m.mat)
+	blas64.Trmm(blas.Right, blas.NoTrans, 1, b.chol.mat, m.mat)
+	if a.cond > matrix.ConditionTolerance {
+		return matrix.Condition(a.cond)
 	}
 	return nil
 }

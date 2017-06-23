@@ -91,13 +91,15 @@ func sameAnswerFloat(a, b interface{}) bool {
 	return a.(float64) == b.(float64)
 }
 
-// sameAnswerFloatApprox returns whether the two inputs are both NaN or within tol
-// of each other.
-func sameAnswerFloatApprox(a, b interface{}) bool {
-	if math.IsNaN(a.(float64)) {
-		return math.IsNaN(b.(float64))
+// sameAnswerFloatApproxTol returns a function that determines whether its two
+// inputs are both NaN or within tol of each other.
+func sameAnswerFloatApproxTol(tol float64) func(a, b interface{}) bool {
+	return func(a, b interface{}) bool {
+		if math.IsNaN(a.(float64)) {
+			return math.IsNaN(b.(float64))
+		}
+		return floats.EqualWithinAbsOrRel(a.(float64), b.(float64), tol, tol)
 	}
-	return floats.EqualWithinAbsOrRel(a.(float64), b.(float64), 1e-12, 1e-12)
 }
 
 func sameAnswerF64SliceOfSlice(a, b interface{}) bool {
@@ -420,9 +422,10 @@ func equalApprox(a, b Matrix, tol float64, ignoreNaN bool) bool {
 	for i := 0; i < ar; i++ {
 		for j := 0; j < ac; j++ {
 			if !floats.EqualWithinAbsOrRel(a.At(i, j), b.At(i, j), tol, tol) {
-				if !ignoreNaN || math.IsNaN(a.At(i, j)) != math.IsNaN(b.At(i, j)) {
-					return false
+				if ignoreNaN && math.IsNaN(a.At(i, j)) && math.IsNaN(b.At(i, j)) {
+					continue
 				}
+				return false
 			}
 		}
 	}

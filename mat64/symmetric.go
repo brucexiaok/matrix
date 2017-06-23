@@ -5,6 +5,8 @@
 package mat64
 
 import (
+	"math"
+
 	"github.com/gonum/blas"
 	"github.com/gonum/blas/blas64"
 	"github.com/gonum/matrix"
@@ -49,25 +51,29 @@ type MutableSymmetric interface {
 	SetSym(i, j int, v float64)
 }
 
-// NewSymDense constructs an n x n symmetric matrix. If len(mat) == n * n,
-// mat will be used to hold the underlying data, or if mat == nil, new data will be allocated.
-// The underlying data representation is the same as a Dense matrix, except
-// the values of the entries in the lower triangular portion are completely ignored.
-func NewSymDense(n int, mat []float64) *SymDense {
+// NewSymDense creates a new Symmetric matrix with n rows and columns. If data == nil,
+// a new slice is allocated for the backing slice. If len(data) == n*n, data is
+// used as the backing slice, and changes to the elements of the returned SymDense
+// will be reflected in data. If neither of these is true, NewSymDense will panic.
+//
+// The data must be arranged in row-major order, i.e. the (i*c + j)-th
+// element in the data slice is the {i, j}-th element in the matrix.
+// Only the values in the upper triangular portion of the matrix are used.
+func NewSymDense(n int, data []float64) *SymDense {
 	if n < 0 {
 		panic("mat64: negative dimension")
 	}
-	if mat != nil && n*n != len(mat) {
+	if data != nil && n*n != len(data) {
 		panic(matrix.ErrShape)
 	}
-	if mat == nil {
-		mat = make([]float64, n*n)
+	if data == nil {
+		data = make([]float64, n*n)
 	}
 	return &SymDense{
 		mat: blas64.Symmetric{
 			N:      n,
 			Stride: n,
-			Data:   mat,
+			Data:   data,
 			Uplo:   blas.Upper,
 		},
 		cap: n,
@@ -465,4 +471,34 @@ func (s *SymDense) GrowSquare(n int) Matrix {
 	}
 	v.cap = s.cap
 	return &v
+}
+
+// PowPSD computes a^pow where a is a positive symmetric definite matrix.
+//
+// PowPSD returns an error if the matrix is not  not positive symmetric definite
+// or the Eigendecomposition is not successful.
+func (s *SymDense) PowPSD(a Symmetric, pow float64) error {
+	dim := a.Symmetric()
+	s.reuseAs(dim)
+
+	var eigen EigenSym
+	ok := eigen.Factorize(a, true)
+	if !ok {
+		return matrix.ErrFailedEigen
+	}
+	values := eigen.Values(nil)
+	for i, v := range values {
+		if v <= 0 {
+			return matrix.ErrNotPSD
+		}
+		values[i] = math.Pow(v, pow)
+	}
+	var u Dense
+	u.EigenvectorsSym(&eigen)
+
+	s.SymOuterK(values[0], u.ColView(0))
+	for i := 1; i < dim; i++ {
+		s.SymRankOne(s, values[i], u.ColView(i))
+	}
+	return nil
 }
