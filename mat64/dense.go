@@ -539,3 +539,5 @@ func (m *Dense) Augment(a, b Matrix) {
 	w := m.Slice(0, br, ac, ac+bc).(*Dense)
 	w.Copy(b)
 }
+
+
